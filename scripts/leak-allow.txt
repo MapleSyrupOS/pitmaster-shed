@@ -1,0 +1,1 @@
+# Exemptions for scripts/check-leaks.py: path-glob<TAB>regex the matched text must fit. Public; never a denylist term.

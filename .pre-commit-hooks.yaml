@@ -1,0 +1,43 @@
+- id: adr-check
+  name: adr-check
+  description: Check every ADR's header, proofs and triggers.
+  entry: adr-check/adr-check.py
+  language: script
+  pass_filenames: false
+  always_run: true
+- id: adr-index
+  name: adr-index
+  description: Fail when the ADR index is missing or out of date.
+  entry: adr-index/adr-index.py
+  args: [--check]
+  language: script
+  pass_filenames: false
+  always_run: true
+- id: compact-verify
+  name: compact --verify
+  description: Prove that changes to a source file and its archive only moved text, verbatim, into the archive.
+  entry: compact/compact.py --verify
+  language: script
+  pass_filenames: false
+  always_run: true
+- id: modeguard
+  name: modeguard
+  description: Refuse a file-mode change on a tracked path unless it is on the allow list.
+  entry: modeguard/modeguard.py --index-only
+  language: script
+  pass_filenames: false
+  always_run: true
+- id: ratchet
+  name: ratchet
+  description: Fail when a listed file grows past its line-count limit.
+  entry: ratchet/ratchet.py
+  language: script
+  pass_filenames: false
+  always_run: true
+- id: status-check
+  name: status-check
+  description: Fail when the status file is over its ceiling or a checked bullet cites no existing file.
+  entry: status-check/status-check.py
+  language: script
+  pass_filenames: false
+  always_run: true

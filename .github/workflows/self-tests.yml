@@ -1,0 +1,36 @@
+name: self-tests
+
+# Every branch push runs it, so a tool's branch gets its Windows leg before it lands.
+# Add pull_request at the public flip, for pull requests from forks.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  self-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Every tool's self-test, from a lone copy of its folder
+        run: python scripts/run-self-tests.py
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Leak check (generic layer)
+        run: python scripts/check-leaks.py
+      - name: Shared blocks are byte-identical in every tool that carries them
+        run: python scripts/check-twins.py
+      - name: Twin check, its own self-test
+        run: python scripts/check-twins.py --self-test
