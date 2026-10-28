@@ -45,6 +45,7 @@ import tempfile
 from typing import Callable, Dict, List, Optional, Tuple
 
 PROG = "neighbours"
+# --- shed:shared neighbours-doc begin ---
 DEFAULT_DOC = pathlib.Path("~") / ".pitmaster" / "neighbours.md"
 COLUMNS = ("name", "how to reach it", "family", "cost", "streams", "live")
 COSTS = ("free", "plan", "paid")
@@ -297,6 +298,7 @@ def read(root: pathlib.Path, doc: Optional[str], only: Optional[List[str]],
     report.update({"neighbours": [n.as_dict() for n in listed], "seats": seats, "live": live,
                    "notes": notes, "findings": found})
     return (1 if found else 0), report
+# --- shed:shared neighbours-doc end ---
 
 
 def show(report: Dict[str, object]) -> None:

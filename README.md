@@ -33,6 +33,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`fence-mark`](fence-mark/README.md) | Runs a command in a directory and always leaves a completion marker and a diff of the change, untracked files included. |
 | [`looseends-scan`](looseends-scan/README.md) | Lists a project's loose ends (questions never answered, promises not kept, calls waiting on a ruling, work never landed) from the markers its records already use, each with `file:line`. |
 | [`modeguard`](modeguard/README.md) | Refuses a file-mode change (an executable bit lost, 100755 to 100644) on a tracked path unless it is on an allow list; installs a pre-commit hook. |
+| [`neighbour-check`](neighbour-check/README.md) | Reads each neighbour on the neighbours doc's allow list for what limits it (a usage meter, a quota, its reset and burn rate, where one can be read) and whether it is busy, and writes a Neighbours block; appends a Claude account's usage reading for the others to see. |
 | [`neighbours`](neighbours/README.md) | Reads the neighbours doc (the allow list of other models a skill may call), checks it is sound, and says which of them answer right now, without changing anything. |
 | [`ratchet`](ratchet/README.md) | Fails when a listed file grows past its line-count limit. |
 | [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up. |
