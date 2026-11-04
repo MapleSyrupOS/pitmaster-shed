@@ -1,0 +1,22 @@
+# List prices for the list-$ proxy: substring of the model id, input $/M, output $/M, cache-write multiple,
+# cache-read multiple. First matching row wins, so a model's own id comes before its family's row. A model with no
+# row shows "-" and is shared by output tokens.
+# The proxy puts models on one scale. It is not a bill and not the plan's meter.
+# Last checked: 2026-11-04, from Anthropic's model table as the claude-api skill carries it (cached 2026-10-06):
+# input and output per model, and cache reads where it names them (Opus 5.5 and Sonnet 5.5 $0.20/M, Fable 5.1
+# $0.25/M). Cache writes keep the 1.25 multiple. Haiku 5.5's price is for prompts up to 100K tokens ($0.50 / $2.50
+# beyond); the proxy uses the lower one.
+# Add a row for any other vendor's models with the date and where the prices came from.
+opus-5-5	4	20	1.25	0.05
+sonnet-5-5	2	10	1.25	0.1
+haiku-5-5	0.1	0.5	1.25	0.1
+fable-5-1	10	50	1.25	0.025
+mythos-5-1	10	50	1.25	0.025
+fable-5	10	50	1.25	0.1
+sonnet-5	2	10	1.25	0.1
+sonnet-4-6	3	15	1.25	0.1
+haiku-4-5	1	5	1.25	0.1
+opus	5	25	1.25	0.1
+sonnet	3	15	1.25	0.1
+haiku	1	5	1.25	0.1
+fable	10	50	1.25	0.1

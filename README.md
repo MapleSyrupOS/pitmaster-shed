@@ -27,6 +27,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`adr-check`](adr-check/README.md) | Checks every ADR's YAML header, that each proof resolves, and that MADR's features appear only when two or more options were weighed. |
 | [`adr-public`](adr-public/README.md) | Drafts the public copy of each ADR into a waiting folder, keeps it in step with the private ADR, and moves it up only when the owner approves it. Never publishes. |
 | [`adr-index`](adr-index/README.md) | Writes `INDEX.md`, one table row per ADR, from the ADRs themselves; `--check` fails when it is missing or stale. |
+| [`catchmeup-gather`](catchmeup-gather/README.md) | Lists a project's changes since a date or a person's last caught-up stamp (commits, pull requests, dated log headings, records touched), each with its proof. |
 | [`comment-only`](comment-only/README.md) | Proves that an edit changed only comments, by comparing two versions of each file with comments and spacing stripped (C/C++ and NASM assembly). |
 | [`compact`](compact/README.md) | Moves a block of text into an append-only archive, verbatim and proven, and verifies from git that a compaction changed nothing else. |
 | [`elf-loaded`](elf-loaded/README.md) | Digests the loaded sections of an ELF64 file and compares two, so "this refactor changed no code" is checked against what the loader runs, not the whole file. |
@@ -38,6 +39,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`ratchet`](ratchet/README.md) | Fails when a listed file grows past its line-count limit. |
 | [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up. |
 | [`split-status-log`](split-status-log/README.md) | Splits a newest-first, dated log file by month, byte for byte: the current month stays, each older month moves to its own file. |
+| [`spend-ledger`](spend-ledger/README.md) | Reads an agent session's token spend from its own transcript (Claude Code, Codex) as one ledger row, reports spend beside what landed, and fits tokens per point of a usage meter. |
 | [`status-check`](status-check/README.md) | Checks a status file's line ceiling and that every bullet in the chosen sections cites a file that exists. |
 
 ## Siblings
