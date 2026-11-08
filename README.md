@@ -17,7 +17,7 @@ repos:
       - id: ratchet
 ```
 
-The hooks are `adr-check`, `adr-index`, `compact-verify`, `modeguard`, `ratchet` and `status-check`; the other
+The hooks are `adr-check`, `adr-index`, `compact-verify`, `modeguard`, `ratchet`, `stale-facts` and `status-check`; the other
 tools are run by hand. Every tool runs `--self-test` to check itself, for example `python3 ratchet/ratchet.py --self-test`.
 
 ## Tools
@@ -40,6 +40,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up. |
 | [`split-status-log`](split-status-log/README.md) | Splits a newest-first, dated log file by month, byte for byte: the current month stays, each older month moves to its own file. |
 | [`spend-ledger`](spend-ledger/README.md) | Reads an agent session's token spend from its own transcript (Claude Code, Codex) as one ledger row, reports spend beside what landed, and fits tokens per point of a usage meter. |
+| [`stale-facts`](stale-facts/README.md) | Checks the facts docs state by hand (a skill count, a repository path) against the project, from a facts file, naming each stale line; `--fix` rewrites only the stale value, never in a decision record. |
 | [`status-check`](status-check/README.md) | Checks a status file's line ceiling and that every bullet in the chosen sections cites a file that exists. |
 
 ## Siblings

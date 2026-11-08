@@ -39,8 +39,10 @@ Mechanical, in `draft`:
 - Dropped: the Context section but for its Drivers list (adr-check asks for that list wherever two or more options
   are weighed, so a copy that cut it would fail adr-check in the public tree); the Access and Open questions
   sections; the Owner and Consulted lines.
-- Q-, A- and D-numbers: a parenthesis of only numbers goes ("(Q3, Q4)"), a mixed one keeps its words ("(Q5, the
-  draft's rules)" becomes "(the draft's rules)"). A number left in prose is marked.
+- A record's codes (Q, A, D, and C, F, G, R, S; never M, so a chip name like M1 stays): a parenthesis of only codes
+  goes ("(Q3, Q4)"), a mixed one keeps its words ("(Q5, the draft's rules)" becomes "(the draft's rules)"). A
+  parenthesis of only codes on a wrapped line of its own goes with its line break, so its full stop joins the line
+  above. A code left in prose is marked.
 - History becomes dates and one word: "- 2026-10-21: proposed." and "- 2026-10-21: ratified by the owner." Built-line
   updates and public-copy lines are not carried.
 - "the owner" becomes "the user" in the body prose. The header and History keep "the owner": there it names who ruled.

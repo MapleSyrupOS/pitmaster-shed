@@ -34,6 +34,13 @@
   language: script
   pass_filenames: false
   always_run: true
+- id: stale-facts
+  name: stale-facts
+  description: Fail when a doc states a fact (a count, a repository path) that no longer matches the project.
+  entry: stale-facts/stale-facts.py
+  language: script
+  pass_filenames: false
+  always_run: true
 - id: status-check
   name: status-check
   description: Fail when the status file is over its ceiling or a checked bullet cites no existing file.

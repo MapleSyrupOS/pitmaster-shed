@@ -86,7 +86,9 @@ SOURCES_HEADER = ("# adr-public source list: which version of each private ADR e
                   "# adr\tslot\tsource\tdrafted\tapproved\tword\n"
                   "#   slot: pending (waits for the release review), live (approved), withdraw (a queued withdrawal)\n"
                   "#   source: a hash of the private ADR without its History section\n")
-REF = r"[QAD]\d{1,2}[a-z]?"
+# A record's codes: questions (Q), answers (A), defaults (D), and the other letters records number by: C, F, G, R, S.
+# M is left out so a chip name (M1, M2) is never cut.
+REF = r"[QADCFGRS]\d{1,2}[a-z]?"
 PRIVATE_PREFIXES = ("docs/bbq/", "docs/proposals/", "docs/audits/", "docs/field-reports/", "docs/STATUS", "drafts/",
                     ".claude/", "scripts/leak-allow-private", "docs/decisions/ADR-",
                     "docs/decisions/public/pending/", "docs/decisions/public/withdrawn/")
@@ -315,16 +317,32 @@ def owner_to_user(s: str) -> str:
 REFTOK = re.compile(rf"^{REF}(?:\s*[–-]\s*{REF})?$|^(?:Defaulted|defaulted|P\d+)$")
 
 
+def _ref_rest(inner: str) -> Optional[List[str]]:
+    """The tokens of a parenthesis that are not record codes; None when it holds no code at all."""
+    if not re.search(rf"\b{REF}\b", inner):
+        return None
+    toks = [t.strip() for t in re.split(r"\s*[,;]\s*|\s+and\s+", inner) if t.strip()]
+    return [t for t in toks if not REFTOK.match(t)]
+
+
 def strip_ref_parens(line: str) -> str:
-    """Drop a parenthesis made only of Q-, A- and D-numbers; strip the numbers from a mixed one."""
+    """Drop a parenthesis made only of record codes; strip the codes from a mixed one. A parenthesis of only codes
+    that is a wrapped line of its own takes its newline with it, so its full stop joins the line above."""
+    def own_line(m: "re.Match[str]") -> str:
+        rest = _ref_rest(m.group(1))
+        return m.group(2) if rest == [] else m.group(0)
+    line = re.sub(r"\n[ \t]*\(([^()\n]*(?:\n[^()\n]+)*)\)([.,;:]?)[ \t]*(?=\n|$)", own_line, line)
+
     def fix(m: "re.Match[str]") -> str:
-        inner = m.group(1)
-        if not re.search(rf"\b{REF}\b", inner):
+        lead, inner, after = m.group(1), m.group(2), m.group(3)
+        rest = _ref_rest(inner)
+        if rest is None:
             return m.group(0)
-        toks = [t.strip() for t in re.split(r"\s*[,;]\s*|\s+and\s+", inner) if t.strip()]
-        rest = [t for t in toks if not REFTOK.match(t)]
-        return (" (" + ", ".join(rest) + ")") if rest else ""
-    return re.sub(r"[ \t]*\(([^()\n]*(?:\n[^()\n]+)*)\)", fix, line)
+        if m.start() == 0 or m.string[m.start() - 1] == "\n":
+            # At a line's start: keep the indentation, and drop the space after a parenthesis of only codes.
+            return lead + ("(" + ", ".join(rest) + ")" + after if rest else "")
+        return ((" (" + ", ".join(rest) + ")") if rest else "") + after
+    return re.sub(r"([ \t]*)\(([^()\n]*(?:\n[^()\n]+)*)\)([ \t]?)", fix, line)
 
 
 def strip_refs_outside_fences(text: str) -> str:
@@ -1103,6 +1121,19 @@ def self_test(broken: Optional[str]) -> int:
                    yaml_scalar("2026-10-23") == '"2026-10-23"' and yaml_scalar("12") == '"12"'
                    and yaml_scalar("yes") == '"yes"' and yaml_scalar("the owner") == "the owner")
             expect("green: the Owner and Consulted lines are dropped", "**Owner:**" not in text and "Consulted" not in text)
+            expect("green: a wrapped line of only codes takes its newline, so its full stop joins the line above",
+                   strip_refs_outside_fences("- a rule that wraps\n  (Q3, Q4).\n- next\n") == "- a rule that wraps.\n- next\n")
+            expect("green: a parenthesis of codes at a line's start keeps the line's indentation",
+                   strip_refs_outside_fences("- a\n  (Q3) then more\n") == "- a\n  then more\n"
+                   and strip_refs_outside_fences("- a\n  (Q3, the owner) b\n") == "- a\n  (the owner) b\n")
+            expect("green: mid-line, a parenthesis of codes goes with its leading space",
+                   strip_refs_outside_fences("text (Q1) more, and end (Q2).\n") == "text more, and end.\n")
+            expect("green: C, F, G, R and S codes are cut like Q, A and D; a chip name (M1) is not",
+                   strip_refs_outside_fences("a (C1, F3) b (G4) c (R2; S6).\n") == "a b c.\n"
+                   and strip_refs_outside_fences("an M1 Mac (M1)\n") == "an M1 Mac (M1)\n")
+            expect("green: a C, F, G, R or S code left in prose is marked; M1 is not",
+                   bool(cut_line("the rules ADR (G4 rules) says", None)[1])
+                   and not cut_line("an M1 Mac runs it", None)[1])
             expect("green: a parenthesis of only numbers goes and a mixed number is stripped",
                    "(Q1, Q2)" not in text and "(Q3, Defaulted)" not in text and "**Rule**: do it." in text)
             body_text = text.split("\n## History")[0].split("\n---\n", 1)[1]
