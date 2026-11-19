@@ -18,7 +18,8 @@ The map file (default tools/ripplecheck.list)
         row        <ROW> cheap|slow|sweep-only [-- <command>]  declares a row and how its full run is started
         feed       <glob> <ROW> [-- <targeted command>]         a changed file matching <glob> feeds <ROW>
         always     <ROW> [-- <command>]                         fires on every diff (the project's fixed fast gate)
-        strict     <prefix> [<prefix> ...]                      an unmapped changed file under these is red
+        strict     <prefix> [<prefix> ...]                      an unmapped changed file under these is red; a folder,
+                                                                or text ending in * for every path starting with it
         sweep-only <ROW> [<ROW> ...]                            rows run on a schedule, never per diff
 
         A feed with a targeted command runs it; otherwise a ``cheap`` row runs its row command and a ``slow`` row is
@@ -79,7 +80,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, TextIO, Tuple
 
 PROG = "ripplecheck"
 DEFAULT_MAP = "tools/ripplecheck.list"
@@ -163,8 +164,8 @@ def parse_map(text: str, path: str, listed: Sequence[str] = ()) -> Map:
                 m.errors.append(f"{where}: cannot read this line (want glob | row | run|owed|always | command): "
                                 f"{line}")
                 continue
-            glob, row, action, cmd = parts
-            command = None if cmd in ("", "-") else cmd
+            glob, row, action, raw = parts
+            command = None if raw in ("", "-") else raw
             if action == "run" and command is None:
                 m.errors.append(f"{where}: run names no command")
             kind = "always" if action == "always" else "feed"
@@ -185,17 +186,17 @@ def parse_map(text: str, path: str, listed: Sequence[str] = ()) -> Map:
         elif f[0] == "always" and len(f) == 2:
             m.rules.append(Rule("always", "", f[1], cmd, n))
         elif f[0] == "strict" and len(f) >= 2:
-            m.strict += [p if p.endswith("/") else p + "/" for p in f[1:]]
+            m.strict += [p[:-1] if p.endswith("*") else p if p.endswith("/") else p + "/" for p in f[1:]]
         elif f[0] == "sweep-only" and len(f) >= 2 and not cmd:
             m.sweep.update(f[1:])
         else:
             m.errors.append(f"{where}: cannot read this line: {line}")
     declared = bool(m.rows)
     for r in m.rules:
-        row = m.rows.get(r.row)
+        rowdef = m.rows.get(r.row)
         if r.row in m.sweep:
             m.errors.append(f"{path}:{r.line}: {r.kind} names row {r.row}, which is declared sweep-only")
-        elif row is None and (declared or r.action is None):
+        elif rowdef is None and (declared or r.action is None):
             m.errors.append(f"{path}:{r.line}: {r.kind} names row {r.row}, which no row line declares")
     fed = {r.row for r in m.rules}
     wanted: Dict[str, str] = {name: f"{path}:{row.line}" for name, row in m.rows.items()}
@@ -337,7 +338,7 @@ def run_cmd(root: str, cmd: str) -> Tuple[int, float, str]:
     return r.returncode, time.monotonic() - t, "\n".join(tail)
 
 
-def report(m: Map, res: Result, root: str, dry: bool, named: Sequence[str], out=sys.stdout) -> int:
+def report(m: Map, res: Result, root: str, dry: bool, named: Sequence[str], out: TextIO = sys.stdout) -> int:
     red = False
     for e in m.errors:
         print(f"RED  map  {e}", file=out)
@@ -365,9 +366,9 @@ def report(m: Map, res: Result, root: str, dry: bool, named: Sequence[str], out=
             if tail:
                 print("     " + tail.replace("\n", "\n     "), file=out)
     owed_left: List[str] = []
-    for row, cmd in res.owed:
+    for row, owed_cmd in res.owed:
         mark = "OWED (named)" if row in named else "OWED"
-        print(f"{mark}  {row}  {cmd or '(no command in the map)'}", file=out)
+        print(f"{mark}  {row}  {owed_cmd or '(no command in the map)'}", file=out)
         if row not in named and row not in owed_left:
             owed_left.append(row)
     if red:
@@ -385,7 +386,7 @@ def report(m: Map, res: Result, root: str, dry: bool, named: Sequence[str], out=
     return 0
 
 
-def replay(m: Map, folder: str, out=sys.stdout) -> int:
+def replay(m: Map, folder: str, out: TextIO = sys.stdout) -> int:
     files = sorted(pathlib.Path(folder).glob("*.replay"))
     if not files:
         print(f"RED  replay  no *.replay files in {folder}", file=out)
@@ -459,7 +460,7 @@ def self_test() -> int:
         if not cond:
             fails += 1
 
-    def quiet(fn, *a, **k):
+    def quiet(fn: Callable[..., int], *a: Any, **k: Any) -> Tuple[int, str]:
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = fn(*a, **k, out=buf)
@@ -520,6 +521,14 @@ def self_test() -> int:
         res = evaluate(m, ["src/new.c"])
         rc, txt = quiet(report, m, res, d, False, [])
         case("red arm: unmapped file under strict exits 1", rc == 1 and "RED  unmapped  src/new.c" in txt)
+        star = parse_map(SAMPLE.format(py=py) + "strict pkg/gen*\n", "ripplecheck.list")
+        res = evaluate(star, ["pkg/gen_cfg.py"])
+        case("red arm: strict text* catches a file starting with it", res.strict_red == ["pkg/gen_cfg.py"])
+        res = evaluate(star, ["pkg/other.py"])
+        case("strict text* leaves a file that does not start with it alone", res.strict_red == [])
+        plain = parse_map(SAMPLE.format(py=py) + "strict lib/gen\n", "ripplecheck.list")
+        res = evaluate(plain, ["lib/gen_cfg.py", "lib/gen/x.py"])
+        case("strict without * still means the folder", res.strict_red == ["lib/gen/x.py"])
 
         bad = parse_map(SAMPLE.format(py=py) + "row GHOST cheap -- true\n", "ripplecheck.list")
         case("red arm: coverage names an unfed row", any("GHOST" in e and "coverage" in e for e in bad.errors))
@@ -541,7 +550,7 @@ def self_test() -> int:
         rc, txt = quiet(report, m, evaluate(m, ["src/a.py"]), d, True, [])
         case("dry run runs nothing and exits 2", rc == 2 and "WOULD RUN" in txt)
 
-        # replays: the 2026-11-18 shape, a docs .py swept into a corpus row
+        # replays: a docs .py swept into a corpus row
         rp = pathlib.Path(d, "replays")
         rp.mkdir()
         (rp / "docs-py.replay").write_text("# a docs .py fed the corpus\nexpect CORPUS\nA\tdocs/guide/x.py\n")
@@ -610,8 +619,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 3
     m = parse_map(pathlib.Path(mpath).read_text(encoding="utf-8"), a.map, listed)
     if a.check_map:
-        for e in m.errors:
-            print(f"RED  map  {e}")
+        for err in m.errors:
+            print(f"RED  map  {err}")
         rc = 1 if m.errors else 0
         if a.replay:
             rc = max(rc, replay(m, os.path.join(root, a.replay)))

@@ -50,7 +50,9 @@ Bar lines: `<glob> | <ROW> | run|owed|always | <command or ->`.
   line the rule itself says `run` or `owed`; `always` fires on every diff.
 - `{files}` in a command stands for the changed paths that fired it, quoted for the shell.
 - Globs: `*` and `?` stay in one folder, `**` crosses folders, a trailing `/` means everything below.
-- An unmapped changed file under a `strict` prefix is red; elsewhere the count is one line.
+- An unmapped changed file under a `strict` prefix is red; elsewhere the count is one line. A `strict` prefix is a
+  folder (`tools/`, or `tools`); one ending in `*` (`tools/gen*`) covers every path that starts with the text before
+  the `*`.
 - Coverage: every check the project lists is fed by a rule or is sweep-only.
 
 ## Replays
