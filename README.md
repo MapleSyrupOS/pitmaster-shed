@@ -30,7 +30,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`catchmeup-gather`](catchmeup-gather/README.md) | Lists a project's changes since a date or a person's last caught-up stamp (commits, pull requests, dated log headings, records touched), each with its proof. |
 | [`comment-only`](comment-only/README.md) | Proves that an edit changed only comments, by comparing two versions of each file with comments and spacing stripped (C/C++ and NASM assembly). |
 | [`compact`](compact/README.md) | Moves a block of text into an append-only archive, verbatim and proven, and verifies from git that a compaction changed nothing else. |
-| [`diskscan`](diskscan/README.md) | Finds where disk space went (biggest folders, growth since the last scan, big folders nobody named) inside a scope its owner approved, and gives read-only verdicts on leftover git clones and worktrees. Never deletes. |
+| [`diskscan`](diskscan/README.md) | Finds where disk space went (biggest folders, growth since the last scan, big folders nobody named) inside the folders its owner allowed by name, and gives read-only verdicts on leftover git clones and worktrees. Never deletes. |
 | [`elf-loaded`](elf-loaded/README.md) | Digests the loaded sections of an ELF64 file and compares two, so "this refactor changed no code" is checked against what the loader runs, not the whole file. |
 | [`fence-mark`](fence-mark/README.md) | Runs a command in a directory and always leaves a completion marker and a diff of the change, untracked files included. |
 | [`looseends-scan`](looseends-scan/README.md) | Lists a project's loose ends (questions never answered, promises not kept, calls waiting on a ruling, work never landed) from the markers its records already use, each with `file:line`. |
@@ -39,6 +39,7 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`neighbours`](neighbours/README.md) | Reads the neighbours doc (the allow list of other models a skill may call), checks it is sound, and says which of them answer right now, without changing anything. |
 | [`ratchet`](ratchet/README.md) | Fails when a listed file grows past its line-count limit. |
 | [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up. |
+| [`ripplecheck`](ripplecheck/README.md) | Says which of a project's checks a branch's changes feed, from a map the project keeps, with the file and rule that fired each; runs the cheap ones and names the slow ones OWED with their command. |
 | [`split-status-log`](split-status-log/README.md) | Splits a newest-first, dated log file by month, byte for byte: the current month stays, each older month moves to its own file. |
 | [`spend-ledger`](spend-ledger/README.md) | Reads an agent session's token spend from its own transcript (Claude Code, Codex) as one ledger row, reports spend beside what landed, and fits tokens per point of a usage meter. |
 | [`stale-facts`](stale-facts/README.md) | Checks the facts docs state by hand (a skill count, a repository path) against the project, from a facts file, naming each stale line; `--fix` rewrites only the stale value, never in a decision record. |
