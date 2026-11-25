@@ -17,7 +17,7 @@ repos:
       - id: ratchet
 ```
 
-The hooks are `adr-check`, `adr-index`, `compact-verify`, `modeguard`, `ratchet`, `stale-facts` and `status-check`; the other
+The hooks are `adr-check`, `adr-index`, `compact-verify`, `keyed-merge-check`, `modeguard`, `ratchet`, `stale-facts` and `status-check`; the other
 tools are run by hand. Every tool runs `--self-test` to check itself, for example `python3 ratchet/ratchet.py --self-test`.
 
 ## Tools
@@ -33,17 +33,19 @@ tools are run by hand. Every tool runs `--self-test` to check itself, for exampl
 | [`diskscan`](diskscan/README.md) | Finds where disk space went (biggest folders, growth since the last scan, big folders nobody named) inside the folders its owner allowed by name, and gives read-only verdicts on leftover git clones and worktrees. Never deletes. |
 | [`elf-loaded`](elf-loaded/README.md) | Digests the loaded sections of an ELF64 file and compares two, so "this refactor changed no code" is checked against what the loader runs, not the whole file. |
 | [`fence-mark`](fence-mark/README.md) | Runs a command in a directory and always leaves a completion marker and a diff of the change, untracked files included. |
+| [`keyed-merge`](keyed-merge/README.md) | Merges the shared tables many branches add to (a census, an allowlist, a ledger, a case list) by key instead of by line, as a git merge driver or a command; stops only on a real conflict, never writes a row twice. `tablemerge` is its second name. |
 | [`looseends-scan`](looseends-scan/README.md) | Lists a project's loose ends (questions never answered, promises not kept, calls waiting on a ruling, work never landed) from the markers its records already use, each with `file:line`. |
 | [`modeguard`](modeguard/README.md) | Refuses a file-mode change (an executable bit lost, 100755 to 100644) on a tracked path unless it is on an allow list; installs a pre-commit hook. |
 | [`neighbour-check`](neighbour-check/README.md) | Reads each neighbour on the neighbours doc's allow list for what limits it (a usage meter, a quota, its reset and burn rate, where one can be read) and whether it is busy, and writes a Neighbours block; appends a Claude account's usage reading for the others to see. |
 | [`neighbours`](neighbours/README.md) | Reads the neighbours doc (the allow list of other models a skill may call), checks it is sound, and says which of them answer right now, without changing anything. |
 | [`ratchet`](ratchet/README.md) | Fails when a listed file grows past its line-count limit. |
-| [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up. |
+| [`record-check`](record-check/README.md) | Checks the decisions tables in a meeting record: each has a where column, every row's status is agreed, proposed or open, and every row cites where it came up; given the numbered transcript, that the cited lines exist, quotes are word for word and agreed rows have a yes. |
 | [`ripplecheck`](ripplecheck/README.md) | Says which of a project's checks a branch's changes feed, from a map the project keeps, with the file and rule that fired each; runs the cheap ones and names the slow ones OWED with their command. |
 | [`split-status-log`](split-status-log/README.md) | Splits a newest-first, dated log file by month, byte for byte: the current month stays, each older month moves to its own file. |
 | [`spend-ledger`](spend-ledger/README.md) | Reads an agent session's token spend from its own transcript (Claude Code, Codex) as one ledger row, reports spend beside what landed, and fits tokens per point of a usage meter. |
 | [`stale-facts`](stale-facts/README.md) | Checks the facts docs state by hand (a skill count, a repository path) against the project, from a facts file, naming each stale line; `--fix` rewrites only the stale value, never in a decision record. |
 | [`status-check`](status-check/README.md) | Checks a status file's line ceiling and that every bullet in the chosen sections cites a file that exists. |
+| [`transcript-number`](transcript-number/README.md) | Numbers a talk's transcript T1, T2… so a record can cite its lines, checks a numbered one for skipped or doubled numbers, and writes a quote-only record (the decision-word lines, every status open) when no model is at hand. |
 
 ## Siblings
 

@@ -2,6 +2,7 @@
 """Check the decisions tables in a meeting record. Python 3.8+, standard library only.
 
 Usage: record-check.py FILE [FILE ...]
+       record-check.py FILE [FILE ...] --transcript TRANSCRIPT [--quote-fillers drop] [--words WORDS]
        record-check.py --self-test
 
 A record is a Markdown file written by hand: a talk-through record, a townhall record,
@@ -20,7 +21,24 @@ and has a "status" cell. Every record holds at least one. Each table must:
     tbd, todo, none).
 A "Decisions" heading with no decisions table under it is a finding. Tables inside
 fenced code blocks are examples and are skipped. A pipe inside a cell is written \\|.
-The script does not check that a citation is true, only that one is there.
+Without --transcript the script does not check that a citation is true, only that one is
+there.
+
+With --transcript (a transcript numbered T1, T2..., one "T<n>: text" line per turn, as
+transcript-number writes it), it also checks that each citation is true:
+  - every T-number the record names (T12, or a range T12-T15) exists in the transcript;
+  - every decisions row's where cell holds at least one T-number;
+  - every quote of three or more words, in straight or curly double quotes, is found word
+    for word in the transcript (case, punctuation and spacing aside). A quote may drop
+    words only with --quote-fillers drop, and then only fillers (uh, um, uhm, er, erm, ah,
+    hmm, you know), each place marked [...] or [\u2026]; [sic] is ignored;
+  - every agreed row has an assent word (yes, agreed, sounds good, +1 and the like) in
+    the lines it cites or the three after each.
+--words FILE names a project's words file (Markdown, sections "Corrections", "Names" and
+"Assent", one "- " item per entry; see the README). A "heard" spelling of a correction
+with no "only in" context, or a name the file substitutes, still in the record is a
+finding (the name itself is never printed). Quotes are matched against the transcript as
+written and again after the file's swaps. Assent items add to the built-in list.
 
 Exit 0: green; 1: findings; 2: invalid usage or unreadable input.
 """
@@ -35,7 +53,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from typing import Callable, List, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 PROG = "record-check"
 STATUSES = ("agreed", "proposed", "open")
@@ -61,8 +79,11 @@ def bare(cell: str) -> str:
     return EMPHASIS.sub("", cell.strip()).strip().lower()
 
 
-def findings(path: pathlib.Path) -> Tuple[List[str], int, int]:
-    """Return (findings, tables, rows) for one record."""
+Row = Tuple[int, str, str]  # (line number, status, where cell) of a well-formed decisions row
+
+
+def findings(path: pathlib.Path, collect: Optional[List[Row]] = None) -> Tuple[List[str], int, int]:
+    """Return (findings, tables, rows) for one record; append well-formed rows to collect."""
     lines = path.read_bytes().decode("utf-8").splitlines()
     out: List[str] = []
     tables = rows = 0
@@ -132,23 +153,271 @@ def findings(path: pathlib.Path) -> Tuple[List[str], int, int]:
                     path.name, lineno, row[status_col], ", ".join(STATUSES)))
             if where_col is not None and bare(row[where_col]) in PLACEHOLDERS:
                 out.append("{}:{}: decision is not cited (empty where)".format(path.name, lineno))
+            elif collect is not None and where_col is not None:
+                collect.append((lineno, status, row[where_col]))
     close_heading()
     if tables == 0:
         out.append("{}: no decisions table (a table whose header starts | decision | status |)".format(path.name))
     return out, tables, rows
 
 
-def run(paths: List[pathlib.Path]) -> int:
+# ---------------------------------------------------------------- transcript checks (--transcript)
+
+TLINE = re.compile(r"^\s*T(\d+):\s?(.*)$")
+TREF = re.compile(r"(?<![\w-])(?<!tier )(?<!Tier )T(\d+)(?:\s*[-–—]\s*T(\d+)|[-–—](\d+))?(?![\w])")
+QUOTE = re.compile(r"\"([^\"\n]+)\"|“([^”\n]+)”")
+DROP = re.compile(r"\[(?:\.\.\.|…)\]")
+SIC = re.compile(r"\[sic\]", re.IGNORECASE)
+WORD = re.compile(r"[\w']+")
+FILLERS = (("uh",), ("um",), ("uhm",), ("er",), ("erm",), ("ah",), ("hmm",), ("you", "know"))
+ASSENT = ("yes", "yeah", "yep", "agreed", "agree", "sounds good", "no objection", "+1", "i will do it",
+          "i'll do it", "i can do that", "let's do that", "works for me")
+AFTER = 3  # an agreed row's yes may come in the cited lines or this many lines after each
+
+
+def words_of(text: str) -> List[str]:
+    return WORD.findall(text.replace("’", "'").replace("‘", "'").lower())
+
+
+class Words:
+    """A project's words file: corrections, names and extra assent words."""
+
+    def __init__(self) -> None:
+        self.flag: List[Tuple[str, ...]] = []           # heard forms to flag in a record (no "only in")
+        self.names: List[Tuple[str, ...]] = []          # substituted-away names, never printed
+        self.swaps: List[Tuple[Tuple[str, ...], Tuple[str, ...]]] = []
+        self.assent: List[str] = []
+
+
+def read_words(path: pathlib.Path) -> Words:
+    w = Words()
+    section = ""
+    for lineno, line in enumerate(path.read_bytes().decode("utf-8").splitlines(), 1):
+        heading = HEADING.match(line)
+        if heading:
+            title = bare(heading.group(2))
+            section = next((n for n in ("corrections", "names", "assent") if title.startswith(n)), "")
+            continue
+        item = re.match(r"^\s*[-*]\s+(.*\S)\s*$", line)
+        if not item or section not in ("corrections", "names", "assent"):
+            continue
+        text = item.group(1)
+        if section == "assent":
+            w.assent.append(text.strip().strip("\"").lower())
+            continue
+        context = re.search(r"\(\s*only in\b[^)]*\)\s*$", text, re.IGNORECASE)
+        if context:
+            text = text[:context.start()].rstrip()
+        parts = re.split(r"\s*(?:→|->)\s*", text)
+        if len(parts) == 1:
+            if section == "names":
+                raise ValueError("{}:{}: a Names item needs \"name -> name used\"".format(path.name, lineno))
+            continue  # a right-spelling-only correction: advice for the writer, nothing to check
+        if len(parts) != 2 or not parts[1].strip():
+            raise ValueError("{}:{}: write an item as \"heard -> right\"".format(path.name, lineno))
+        right = tuple(words_of(parts[1]))
+        for heard in re.split(r"\s*[,/]\s*", parts[0]):
+            form = tuple(words_of(heard))
+            if not form:
+                continue
+            w.swaps.append((form, right))
+            if section == "names":
+                w.names.append(form)
+            elif not context:
+                w.flag.append(form)
+    return w
+
+
+def swapped(seq: Sequence[str], swaps: Sequence[Tuple[Tuple[str, ...], Tuple[str, ...]]]) -> List[str]:
+    out: List[str] = []
+    i = 0
+    longest = sorted(swaps, key=lambda s: -len(s[0]))
+    while i < len(seq):
+        for heard, right in longest:
+            if tuple(seq[i:i + len(heard)]) == heard:
+                out.extend(right)
+                i += len(heard)
+                break
+        else:
+            out.append(seq[i])
+            i += 1
+    return out
+
+
+def left_in(seq: Sequence[str], form: Sequence[str], rights: Sequence[Tuple[str, ...]]) -> bool:
+    """True when form occurs in seq other than inside a longer right-hand form, so "Pat -> Pat Example" never
+    flags "Pat Example" while "Pat Example -> Pat" still flags "Pat Example"."""
+    n = len(form)
+    for i in range(len(seq) - n + 1):
+        if tuple(seq[i:i + n]) != tuple(form):
+            continue
+        inside = any(len(r) > n and tuple(seq[j:j + len(r)]) == r and j <= i and i + n <= j + len(r)
+                     for r in rights for j in range(max(0, i - len(r) + n), i + 1))
+        if not inside:
+            return True
+    return False
+
+
+def contains(hay: Sequence[str], needle: Sequence[str]) -> bool:
+    n = len(needle)
+    return n > 0 and any(tuple(hay[i:i + n]) == tuple(needle) for i in range(len(hay) - n + 1))
+
+
+def filler_at(hay: Sequence[str], j: int) -> int:
+    """The length of a filler starting at j, or 0."""
+    return next((len(f) for f in FILLERS if tuple(hay[j:j + len(f)]) == f), 0)
+
+
+def found_with_fillers(hay: Sequence[str], parts: List[List[str]], lead: bool = False, trail: bool = False) -> bool:
+    """Each part in order, with only one or more fillers between neighbours (and before the first, after the
+    last, where the quote starts or ends with a [...] mark)."""
+    def at(i: int, k: int) -> bool:
+        part = parts[k]
+        if tuple(hay[i:i + len(part)]) != tuple(part):
+            return False
+        j = i + len(part)
+        if k == len(parts) - 1:
+            return not trail or filler_at(hay, j) > 0
+        skipped = False
+        while True:
+            for f in FILLERS:
+                if tuple(hay[j:j + len(f)]) == f:
+                    j += len(f)
+                    skipped = True
+                    break
+            else:
+                break
+            if skipped and at(j, k + 1):
+                return True
+        return False
+    def led(i: int) -> bool:
+        return any(tuple(hay[i - len(f):i]) == f for f in FILLERS if i - len(f) >= 0)
+    return bool(parts) and any(at(i, 0) for i in range(len(hay)) if not lead or led(i))
+
+
+def has_assent(text: str, extra: Sequence[str]) -> bool:
+    flat = text.replace("’", "'").replace("‘", "'")
+    for phrase in tuple(ASSENT) + tuple(extra):
+        if re.search(r"(?<![\w'])" + re.escape(phrase) + r"(?![\w'])", flat, re.IGNORECASE):
+            return True
+    return False
+
+
+def read_transcript(path: pathlib.Path) -> Dict[int, str]:
+    lines: Dict[int, str] = {}
+    text = path.read_bytes().decode("utf-8")
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        m = TLINE.match(line)
+        if m:
+            lines[int(m.group(1))] = m.group(2)
+    if not lines:
+        raise ValueError("{}: no numbered lines (\"T1: ...\"); number it with transcript-number".format(path.name))
+    return lines
+
+
+def refs(text: str) -> List[int]:
+    out: List[int] = []
+    for m in TREF.finditer(text):
+        a = int(m.group(1))
+        if a == 0:
+            continue  # T0 is a tier's name (ADR-032); a transcript starts at T1
+        end = m.group(2) or m.group(3)
+        b = int(end) if end else a
+        out.extend(range(a, b + 1) if 0 <= b - a <= 500 else [a, b])
+    return out
+
+
+def transcript_findings(path: pathlib.Path, rows: List[Row], tx: Dict[int, str], fillers: bool,
+                        words: Optional[Words]) -> List[str]:
+    out: List[str] = []
+    name = path.name
+    lo, hi = min(tx), max(tx)
+    text_lines = path.read_bytes().decode("utf-8").splitlines()
+    hays = [words_of(tx[k]) for k in sorted(tx)]  # a quote comes from one line: one turn, one speaker
+    hays += [swapped(h, words.swaps) for h in hays] if words else []
+    rights = [r for _, r in words.swaps] if words else []
+    extra = words.assent if words else []
+    fence = ""
+    for lineno, line in enumerate(text_lines, 1):
+        mark = FENCE.match(line)
+        if fence:
+            if mark and mark.group(1)[0] == fence[0] and len(mark.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if mark:
+            fence = mark.group(1)
+            continue
+        for t in sorted(set(refs(line))):
+            if t not in tx:
+                out.append("{}:{}: T{} is not in the transcript (it has T{}-T{})".format(name, lineno, t, lo, hi))
+        for m in QUOTE.finditer(line):
+            quote = m.group(1) or m.group(2)
+            plain = SIC.sub(" ", quote)
+            if not words_of(DROP.sub(" ", plain)):
+                continue
+            short = quote if len(quote) <= 60 else quote[:57] + "..."
+            if words and any(left_in(words_of(quote), f, rights) for f in words.names):
+                short = "(it holds a name the words file substitutes; not shown)"
+            if DROP.search(plain):
+                if not fillers:
+                    out.append("{}:{}: quote drops words, and --quote-fillers is not drop: \"{}\"".format(
+                        name, lineno, short))
+                    continue
+                pieces = [words_of(p) for p in DROP.split(plain)]
+                lead, trail = not pieces[0], not pieces[-1]
+                parts = [p for p in pieces if p]
+                ok = any(found_with_fillers(h, parts, lead, trail) for h in hays)
+            else:
+                q = words_of(plain)
+                ok = any(contains(h, q) for h in hays)
+            if not ok:
+                out.append("{}:{}: quote not found word for word in the transcript: \"{}\"".format(
+                    name, lineno, short))
+        if words:
+            low = words_of(line)
+            for form in words.flag:
+                if left_in(low, form, rights):
+                    out.append("{}:{}: \"{}\" is a heard spelling in the words file".format(
+                        name, lineno, " ".join(form)))
+            if any(left_in(low, form, rights) for form in words.names):
+                out.append("{}:{}: a name the words file substitutes is still in the record".format(name, lineno))
+    for lineno, status, where in rows:
+        cited = [t for t in refs(where) if t in tx]
+        if not refs(where):
+            out.append("{}:{}: where cell cites no T-number".format(name, lineno))
+            continue
+        if status == "agreed" and cited:
+            span = sorted({k for t in cited for k in range(t, t + AFTER + 1) if k in tx})
+            if not has_assent(" ".join(tx[k] for k in span), extra):
+                out.append("{}:{}: agreed, but no assent word in T{}-T{} (the cited lines and {} after)".format(
+                    name, lineno, min(cited), max(cited) + AFTER, AFTER))
+    return out
+
+
+def run(paths: List[pathlib.Path], transcript: Optional[pathlib.Path] = None, fillers: bool = False,
+        words_path: Optional[pathlib.Path] = None) -> int:
     problems: List[str] = []
     tables = rows = 0
     try:
+        tx = None
+        words = None
+        for extra in (transcript, words_path):
+            if extra is not None and not extra.is_file():
+                raise ValueError("{}: no such file".format(extra))
+        if transcript is not None:
+            tx = read_transcript(transcript)
+        if words_path is not None:
+            words = read_words(words_path)
         for path in paths:
             if not path.is_file():
                 raise ValueError("{}: no such file".format(path))
-            found, t, r = findings(path)
+            good_rows: List[Row] = []
+            found, t, r = findings(path, good_rows)
             problems += found
             tables += t
             rows += r
+            if tx is not None:
+                problems += transcript_findings(path, good_rows, tx, fillers, words)
     except (OSError, UnicodeError, ValueError) as exc:
         print("{}: {}".format(PROG, exc), file=sys.stderr)
         return 2
@@ -226,6 +495,108 @@ def _case_copy_one_folder(base: pathlib.Path) -> bool:
     return call(str(good)) == 0 and call(str(bad)) == 1 and call() == 2
 
 
+TRANSCRIPT = (
+    "T1: Sam: Welcome, everyone.\n\n"
+    "T2: Alex: Should we move the call to Thursdays?\n\n"
+    "T3: Sam: Uh, I think Thursdays work better for most of us.\n\n"
+    "T4: Alex: Sounds good to me.\n\n"
+    "T5: Sam: The docs are on apjay.org now.\n\n"
+    "T6: Alex: Someone should write the release notes.\n\n"
+    "T7: Sam: Let's look at the budget next time.\n"
+)
+TX_RECORD = (
+    "# Record of the call\n\n"
+    "Sam said \"I think Thursdays work better\" (T3).\n\n"
+    "## Decisions\n\n"
+    "| decision | status | where | who |\n"
+    "|---|---|---|---|\n"
+    "| Move the call to Thursdays | agreed | T2-T3 | Sam, Alex |\n"
+    "| Write the release notes | proposed | T6 | - |\n"
+    "| Look at the budget | open | T7 | - |\n"
+)
+WORDS = (
+    "# Words\n\n## Corrections\n\n- apjay.org -> apache.org\n- tack, tax -> TAC (only in: travel/committee)\n"
+    "- ComDev\n\n## Names\n\n- Samuel Q Private -> Sam\n\n## Assent\n\n- aye\n"
+)
+
+
+def _tx_case(record: str, expected: int, says: str = "", *, transcript: str = TRANSCRIPT, fillers: bool = False,
+             words: str = "", absent: str = "") -> Callable[[pathlib.Path], bool]:
+    def case(base: pathlib.Path) -> bool:
+        rec = _write(base / "record.md", record)
+        tx = _write(base / "record-transcript.md", transcript)
+        wp = _write(base / "record-words.md", words) if words else None
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = run([rec], tx, fillers, wp)
+        text = out.getvalue()
+        return code == expected and says in text and (not absent or absent not in text)
+    return case
+
+
+_TX = [
+    ("transcript: a true record", TX_RECORD, 0, "0 finding(s)", {}),
+    ("transcript: a quote that keeps its filler", TX_RECORD.replace("\"I think", "\"Uh, I think"), 0, "", {}),
+    ("transcript: quote_fillers drop, a filler marked [\u2026]",
+     TX_RECORD.replace("\"I think", "\"[\u2026] I think").replace("(T3)", "(T3) and \"I [...] think Thursdays work\"")
+     .replace("I [...] think", "Sam: [...] I think"), 0, "", {"fillers": True}),
+    ("transcript: a quote with [sic] and curly quotes", TX_RECORD.replace("\"I think Thursdays work better\"",
+     "\u201cI think Thursdays [sic] work better\u201d"), 0, "", {}),
+    ("transcript: words file swaps apply to quotes", TX_RECORD + "\nSam: \"docs are on apache.org now\" (T5).\n",
+     0, "0 finding(s)", {"words": WORDS}),
+    ("transcript: a heard form with an only-in context is not flagged", TX_RECORD + "\nThe tax line, T7.\n", 0, "",
+     {"words": WORDS}),
+    ("transcript: an extra assent word from the words file", TX_RECORD.replace("Sounds good to me", "Aye from me"),
+     0, "", {"words": WORDS, "transcript": TRANSCRIPT.replace("Sounds good to me", "Aye from me")}),
+    ("transcript: tier names are not citations", TX_RECORD.replace("# Record of the call", "# Record of the call, tier T0 or tier T9"), 0, "0 finding(s)", {}),
+    ("transcript: \"T6 - 9 people\" is not a range", TX_RECORD + "\nAt T6 - 9 people were there.\n", 0, "0 finding(s)", {}),
+    ("transcript: a name whose right side holds its left side", TX_RECORD.replace("Sam, Alex", "Sam, Alex Example"), 0,
+     "0 finding(s)", {"words": "## Names\n\n- Alex -> Alex Example\n"}),
+    ("transcript: a trailing [\u2026] over a filler", TX_RECORD.replace("\"I think Thursdays work better\"",
+     "\"Sam: [\u2026] I think Thursdays work better for most of us.\""), 0, "", {"fillers": True}),
+    ("red: a two-word quote not in the transcript", TX_RECORD + "\nThe \"budget talk\" waits (T7).\n", 1,
+     "quote not found", {}),
+    ("red: a trailing [\u2026] hiding words, not fillers", TX_RECORD.replace("work better\"", "work [\u2026]\""), 1,
+     "quote not found", {"fillers": True}),
+    ("red: a quote spanning two lines", TX_RECORD + "\n\"to me. Sam: The docs\" (T4).\n", 1, "quote not found", {}),
+    ("red: an em-dash range checks every line in it", TX_RECORD + "\nSee T6\u2014T9.\n", 1, "T8 is not in the transcript", {}),
+    ("red: a heading with words after its name is still read", TX_RECORD + "\nThe docs moved to apjay.org (T5).\n", 1,
+     "heard spelling", {"words": "## Corrections (heard -> right)\n\n- apjay.org -> apache.org\n"}),
+    ("red: a name the right side shortens is still flagged", TX_RECORD + "\nAlex Example spoke (T2).\n", 1,
+     "a name the words file substitutes", {"words": "## Names\n\n- Alex Example -> Alex\n"}),
+    ("red: a failing quote holding a substituted name is not printed", TX_RECORD + "\n\"Samuel Q Private ships it\" (T3).\n",
+     1, "not shown", {"words": WORDS, "absent": "Private ships"}),
+    ("red: an out-of-range T-number", TX_RECORD.replace("| T7 |", "| T99 |"), 1,
+     "record.md:11: T99 is not in the transcript (it has T1-T7)", {}),
+    ("red: an altered quote", TX_RECORD.replace("work better", "works best"), 1,
+     "record.md:3: quote not found word for word", {}),
+    ("red: an agreed row with no assent word", TX_RECORD.replace("| proposed | T6 |", "| agreed | T6 |"), 1,
+     "record.md:10: agreed, but no assent word in T6-T9", {}),
+    ("red: a where cell with no T-number", TX_RECORD.replace("| T7 |", "| the end |"), 1,
+     "record.md:11: where cell cites no T-number", {}),
+    ("red: a dropped filler without --quote-fillers drop", TX_RECORD.replace("\"I think", "\"[\u2026] I think"), 1,
+     "quote drops words, and --quote-fillers is not drop", {}),
+    ("red: quote_fillers drop drops a word that is no filler", TX_RECORD.replace("I think Thursdays", "I [...] Thursdays"),
+     1, "quote not found", {"fillers": True}),
+    ("red: a heard spelling left in the record", TX_RECORD + "\nThe docs moved to apjay.org (T5).\n", 1,
+     "\"apjay org\" is a heard spelling", {"words": WORDS}),
+    ("red: a substituted name left in the record, never printed", TX_RECORD + "\nSamuel Q Private spoke (T3).\n", 1,
+     "a name the words file substitutes is still in the record", {"words": WORDS, "absent": "Private"}),
+]
+
+
+def _case_tx_usage(base: pathlib.Path) -> bool:
+    rec = _write(base / "record.md", TX_RECORD)
+    unnumbered = _write(base / "plain.md", "Sam: hello\n")
+    bad_words = _write(base / "w.md", "## Names\n\n- Only One Side\n")
+    tx = _write(base / "t.md", TRANSCRIPT)
+    codes = []
+    for args in ((unnumbered, None), (tx, bad_words), (base / "absent.md", None)):
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            codes.append(run([rec], args[0], False, args[1]))
+    return codes == [2, 2, 2]
+
+
 # (name, record text, expected exit, text the output must hold)
 _TABLE = [
     ("a talk-through record", GOOD, 0, "1 decisions table(s), 3 row(s), 0 finding(s)"),
@@ -265,8 +636,10 @@ _TABLE = [
 
 _CASES: List[Tuple[str, Callable[[pathlib.Path], bool]]] = (
     [(row[0], _table_case(*row[1:])) for row in _TABLE]
+    + [(row[0], _tx_case(row[1], row[2], row[3], **row[4])) for row in _TX]
     + [
         ("red: two files, the bad one named", _case_two_files_one_bad),
+        ("usage: an unnumbered transcript, a bad words file, a missing transcript", _case_tx_usage),
         ("usage: a missing file", _case_missing_file),
         ("usage: a file that is not UTF-8", _case_not_utf8),
         ("copy-one-folder", _case_copy_one_folder),
@@ -299,6 +672,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog=PROG, description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("files", nargs="*", help="record files to check")
+    parser.add_argument("--transcript", metavar="FILE", help="the numbered transcript (T1: ...) the records cite")
+    parser.add_argument("--quote-fillers", choices=("keep", "drop"), default="keep",
+                        help="drop: a quote may leave out fillers, each place marked [...] (default keep)")
+    parser.add_argument("--words", metavar="FILE", help="the project's words file (corrections, names, assent)")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -310,7 +687,13 @@ def main() -> int:
         parser.print_usage(sys.stderr)
         print("{}: name at least one record file".format(PROG), file=sys.stderr)
         return 2
-    return run([pathlib.Path(f) for f in args.files])
+    if args.transcript is None and (args.words or args.quote_fillers == "drop"):
+        print("{}: --words and --quote-fillers need --transcript".format(PROG), file=sys.stderr)
+        return 2
+    return run([pathlib.Path(f) for f in args.files],
+               pathlib.Path(args.transcript) if args.transcript else None,
+               args.quote_fillers == "drop",
+               pathlib.Path(args.words) if args.words else None)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,13 @@
   language: script
   pass_filenames: false
   always_run: true
+- id: keyed-merge-check
+  name: keyed-merge check
+  description: Each table named in .keyed-merge parses, has no duplicate key, and is in its canonical form and order.
+  entry: keyed-merge/keyed-merge.py check
+  language: script
+  pass_filenames: false
+  always_run: true
 - id: modeguard
   name: modeguard
   description: Refuse a file-mode change on a tracked path unless it is on the allow list.

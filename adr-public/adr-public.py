@@ -2,7 +2,7 @@
 """adr-public: draft each ADR's public copy, keep it in step with the private ADR, and hold it until it is approved.
 
 Usage: adr-public.py [--root DIR] [--dir PATH] COMMAND ...
-       adr-public.py --self-test [--break pending|leak|stale|oneway|drivers]
+       adr-public.py --self-test [--break pending|leak|stale|oneway|drivers|wrap]
 
 Commands
     draft ADR...     Make the mechanical cuts of the private ADR into docs/decisions/public/pending/ (see "The
@@ -53,7 +53,8 @@ What it promises
              switches one guard off, to watch its arm go red by name: pending (a publish.txt line that names a
              pending copy goes unreported), leak (the leak check is skipped), stale (staleness is not checked),
              oneway (a History line to a missing file, or a public copy naming a private path, goes unreported),
-             drivers (draft drops a Context's Drivers list with the rest of Context).
+             drivers (draft drops a Context's Drivers list with the rest of Context),
+             wrap (draft leaves the wrapped continuation lines of a cut Owner, Consulted, Status or Built line in).
 
 Python 3.8 or newer, standard library only.
 """
@@ -94,7 +95,7 @@ PRIVATE_PREFIXES = ("docs/bbq/", "docs/proposals/", "docs/audits/", "docs/field-
                     "docs/decisions/public/pending/", "docs/decisions/public/withdrawn/")
 DROPPED_SECTIONS = ("context", "access", "open questions", "open question")
 DRIVERS_LABEL = re.compile(r"^(?:\*\*)?Drivers(?::\*\*|\*\*:|:)\s*$")
-GUARDS = {"pending": True, "leak": True, "stale": True, "oneway": True, "drivers": True}
+GUARDS = {"pending": True, "leak": True, "stale": True, "oneway": True, "drivers": True, "wrap": True}
 ARMS = tuple(GUARDS)
 
 
@@ -454,6 +455,40 @@ def drivers_list(lines: List[str]) -> List[str]:
     return []
 
 
+CUT_LABELS = re.compile(r"\*\*(Owner|Consulted|Status|Built):\*\*")
+ANY_LABEL = re.compile(r"\*\*[^*\n]+:\*\*")
+
+
+def drop_label_lines(lines: List[str]) -> List[str]:
+    """Lines without the cut bold-label lines (Owner, Consulted, Status, Built) and their wrapped continuation lines:
+    the non-blank lines after one, up to a blank line or the next bold label."""
+    res: List[str] = []
+    cutting = False
+    for x in lines:
+        if CUT_LABELS.match(x):
+            cutting = GUARDS["wrap"]
+            continue
+        if cutting and x.strip() and not ANY_LABEL.match(x):
+            continue
+        cutting = False
+        res.append(x)
+    return res
+
+
+def stray_fragment(rest: List[str]) -> str:
+    """The first line under the opening line when it carries on a sentence (starts lower case or indented): what a
+    cut label line's wrapped continuation looks like once the label is gone. '' when there is none."""
+    after = rest
+    for i, x in enumerate(rest):
+        if x.strip() == OPENING:
+            after = rest[i + 1:]
+            break
+    first = next((x for x in after if x.strip()), "")
+    if first and not first.startswith("## ") and re.match(r"(\s+\S|[a-z])", first) and not re.match(r"\s*[-*+>|\d]", first):
+        return first.strip()
+    return ""
+
+
 def make_copy(text: str, public: Optional[PubTree]) -> Tuple[str, List[str], List[str]]:
     """The mechanical cuts. Returns (the copy, the sections it dropped, the History bullets it dropped)."""
     header, rest = split_header(text)
@@ -484,7 +519,7 @@ def make_copy(text: str, public: Optional[PubTree]) -> Tuple[str, List[str], Lis
     if title is None:
         raise Fail(f"{PROG}: this ADR has no '# ADR-NNN — title' line")
     out += [pre[title], "", OPENING, ""]
-    extra = [x for x in pre[title + 1:] if not re.match(r"\*\*(Owner|Consulted|Status|Built):\*\*", x)]
+    extra = drop_label_lines(pre[title + 1:])
     while extra and not extra[0].strip():
         extra.pop(0)
     notes_dropped: List[str] = []
@@ -652,6 +687,9 @@ def copy_shape(lay: Layout, path: pathlib.Path, strict: bool) -> List[Finding]:
         if h in DROPPED_SECTIONS:
             more = " with more than its Drivers list" if kept else ""
             add(f"has a '## {h.title()}' section{more}, which a public copy leaves out")
+    frag = stray_fragment(rest)
+    if frag:
+        add(f"a stray fragment sits under the opening line (the wrapped rest of a cut label line?): '{frag[:70]}'")
     body = "\n".join(rest)
     for label in ("Owner", "Consulted"):
         if f"**{label}:**" in body:
@@ -1002,7 +1040,11 @@ amends: nothing
 # ADR-001 — demo: a demo decision
 
 **Owner:** the owner
-**Consulted:** this session (a model)
+**Consulted:** this session (a model), which wrote the
+wrapped rest of the line, and
+a third line
+**Revisit when:** a thing
+changes
 
 ## Decision
 
@@ -1121,6 +1163,9 @@ def self_test(broken: Optional[str]) -> int:
                    yaml_scalar("2026-10-23") == '"2026-10-23"' and yaml_scalar("12") == '"12"'
                    and yaml_scalar("yes") == '"yes"' and yaml_scalar("the owner") == "the owner")
             expect("green: the Owner and Consulted lines are dropped", "**Owner:**" not in text and "Consulted" not in text)
+            expect("(wrap) draft drops every continuation line of a cut label line, and keeps the next label with its own",
+                   "wrapped rest" not in text and "third line" not in text and "**Revisit when:** a thing\nchanges" in text)
+            expect("green: a clean draft has no stray fragment under its opening line", stray_fragment(text.split("\n")) == "")
             expect("green: a wrapped line of only codes takes its newline, so its full stop joins the line above",
                    strip_refs_outside_fences("- a rule that wraps\n  (Q3, Q4).\n- next\n") == "- a rule that wraps.\n- next\n")
             expect("green: a parenthesis of codes at a line's start keeps the line's indentation",
@@ -1189,6 +1234,13 @@ def self_test(broken: Optional[str]) -> int:
             path = clean_copy(lay_l)
             path.write_text(path.read_text() + "\nNotes live in /Us" + "ers/someone/notes.\n", encoding="utf-8")
             arm("(leak) a home path in a pending copy", "leak", run_checks(lay_l), "home path")
+
+            # (wrap) a continuation line of a cut label line is left under the opening line.
+            lay_w = make_fixture(base, "wrap-arm")
+            q_cmd_draft(lay_w, [1], D, False)
+            path = clean_copy(lay_w)
+            path.write_text(path.read_text().replace(OPENING + "\n", OPENING + "\n\nwrapped rest of a cut line\n", 1), encoding="utf-8")
+            arm("(wrap) a stray continuation fragment under the opening line", "shape", run_checks(lay_w), "stray fragment")
 
             # (stale) the private ADR changes after the draft.
             lay_s = make_fixture(base, "stale-arm")
