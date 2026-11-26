@@ -3,7 +3,8 @@
 Checks the decisions tables in a meeting record: that each one has a place for where the decision came up, that
 every row has a status of agreed, proposed or open, and that every row cites where it came up. Given the talk's
 numbered transcript, it also checks that each citation is true: the lines exist, the quotes are word for word, and an
-agreed row has a yes. It reports only and never changes a file.
+agreed row has a yes. With `--shape minutes` it checks minutes instead (below). It reports only and never changes a
+file.
 
 Python 3.8 or newer, standard library only. Runs on macOS, Linux, Windows.
 
@@ -12,6 +13,7 @@ Python 3.8 or newer, standard library only. Runs on macOS, Linux, Windows.
 ```
 python3 record-check.py FILE [FILE ...]
 python3 record-check.py FILE [FILE ...] --transcript TRANSCRIPT [--quote-fillers drop] [--words WORDS]
+python3 record-check.py FILE [FILE ...] --shape minutes [--transcript TRANSCRIPT ...]
 python3 record-check.py --self-test
 ```
 
@@ -21,6 +23,7 @@ python3 record-check.py --self-test
 | `--transcript TRANSCRIPT` | The talk's transcript, numbered `T1: …`, one line per turn, as [`transcript-number`](../transcript-number/README.md) writes it. Turns on the transcript checks below. |
 | `--quote-fillers drop` | A quote may leave out fillers, each place marked `[…]` or `[...]`. Default `keep`: a quote keeps every word. |
 | `--words WORDS` | The project's words file (below). |
+| `--shape minutes` | Check minutes (below) in place of decisions tables. Default `decisions`. |
 | `--self-test` | Run the built-in cases, print `PASS` or `FAIL` for each, then a verdict line. Exits non-zero on any failure. |
 
 ## What it checks
@@ -60,6 +63,39 @@ With `--transcript`, besides the shape checks:
   `let's do that`, `works for me`, plus the words file's Assent items.
 
 The transcript itself is never cleaned: it is the record's source, kept exactly as it came.
+
+## Minutes (`--shape minutes`)
+
+Minutes are for a reader who wants one pass: what was reported, who does what, what is still open. Each thing is
+said once. They have four sections, in this order, and each item is one `- ` bullet (or a numbered one):
+
+```markdown
+Present: Sam, Alex.
+
+## Reports
+- **Call day.** Sam finds Thursdays work better for most of us (T3). Agreed: move the call to Thursdays (T2-T4).
+
+## Action items
+- Alex: write the release notes (T6).
+
+## Pending
+- The budget, next time (T7).
+```
+
+The script checks that:
+
+- all four sections are there, in that order (Present may be a heading or a `Present:` line);
+- there is no `Decisions`, `Corrections`, `Key points`, `Open questions` or `Topics` section: agreed items fold into
+  Reports, and corrections go in a check list kept beside the minutes;
+- every item in Reports, Action items and Pending cites a T-number (a lone `- None.` holds an empty section);
+- every action item is written `who: what` (the who may be bold);
+- no item says again what another says: two sentences sharing three quarters of their words (small words such as
+  "the" and "to" aside, and a plural or "-ing" counted as its root) are a finding, at the later one;
+- nothing Reports marks settled (a sentence starting `Agreed:`, `Done:` or `Decided:`) is also in Pending.
+
+With `--transcript`, the transcript checks above run over the minutes too, and each `Agreed:` in Reports needs an
+assent word in the lines its item cites or the three after each. Whether a sentence is a suggestion or an agreement,
+and whose observation it is, are for the writer: the script cannot tell.
 
 ## The words file
 
@@ -134,3 +170,8 @@ quote not in the transcript, a trailing `[…]` hiding words, a quote spanning t
 with words after its name, and a failing quote holding a substituted name (its text must not print). Usage
 cases: a missing file, a file that is not UTF-8, an unnumbered transcript, a Names item with no arrow and a missing
 transcript.
+Minutes cases, green: a good set, `- None.` in an empty section, the same with its transcript and words file, Present as a heading with a bold
+who and numbered items, and an action that shares a topic word with a report. Red: no Pending section, sections out
+of order, a Corrections section, a Decisions section, an item with no T-number, an action not written `who: what`,
+an agreed item restated as an action, the same point in Reports and Pending, a point settled in Reports and still
+pending, an `Agreed:` with no assent word in its lines, and a heard spelling left in the minutes.

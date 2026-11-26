@@ -3,6 +3,7 @@
 
 Usage: record-check.py FILE [FILE ...]
        record-check.py FILE [FILE ...] --transcript TRANSCRIPT [--quote-fillers drop] [--words WORDS]
+       record-check.py FILE [FILE ...] --shape minutes [--transcript TRANSCRIPT ...]
        record-check.py --self-test
 
 A record is a Markdown file written by hand: a talk-through record, a townhall record,
@@ -39,6 +40,20 @@ transcript-number writes it), it also checks that each citation is true:
 with no "only in" context, or a name the file substitutes, still in the record is a
 finding (the name itself is never printed). Quotes are matched against the transcript as
 written and again after the file's swaps. Assent items add to the built-in list.
+
+--shape minutes checks minutes in place of decisions tables. Minutes have four sections,
+in this order: Present (a heading, or a "Present:" line), Reports, Action items and
+Pending; each item is one "- " bullet. The script checks that:
+  - all four are there, in that order, and no Decisions, Corrections, Key points, Open
+    questions or Topics section is (agreed items fold into Reports; corrections go in
+    the record's check list);
+  - every item in Reports, Action items and Pending cites a T-number ("- None." holds an
+    empty section);
+  - every action item is written "who: what";
+  - no item says again what another says (two sentences sharing most of their words);
+  - nothing Reports marks settled ("Agreed: ...", "Done: ...") is also in Pending.
+With --transcript, the transcript checks above run too, and each "Agreed:" in Reports
+needs an assent word in the lines its item cites or the three after each.
 
 Exit 0: green; 1: findings; 2: invalid usage or unreadable input.
 """
@@ -394,8 +409,163 @@ def transcript_findings(path: pathlib.Path, rows: List[Row], tx: Dict[int, str],
     return out
 
 
+# ---------------------------------------------------------------- the minutes shape (--shape minutes)
+
+SHAPES = ("decisions", "minutes")
+MINUTES_SECTIONS = ("present", "reports", "action items", "pending")
+NOT_IN_MINUTES = {
+    "decisions": "agreed items fold into Reports",
+    "corrections": "corrections go in the record's check list",
+    "key points": "key points are Reports",
+    "open questions": "open questions are Pending",
+    "topics": "topics are Reports",
+}
+BULLET = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])\s+(.*)$")
+PRESENT_LINE = re.compile(r"^\s*(?:\*\*|__)?present(?:\*\*|__)?\s*:", re.IGNORECASE)
+WHO = re.compile(r"^\s*(?:\*\*|__)?[^:*_\s][^:*_]{0,59}?(?:\*\*|__)?\s*:(?:\*\*|__)?\s+\S")
+SENTENCE = re.compile(r"(?<=[.;!?])\s+")
+LABEL = re.compile(r"^\s*(?:\*\*|__)[^*_]{1,80}(?:\*\*|__)\s*")  # a bold topic label at an item's start
+SETTLED = ("agreed", "done", "decided")
+STOP = frozenset(
+    "a an and are as at be been but by for from had has have he her his i if in into is it its me my of on or "
+    "our she so than that the their them they this to us was we were what when which who will with would "
+    "you your".split())
+SAME = 0.75     # two sentences sharing this much of their content words say the same thing
+LONG = 4        # a sentence needs this many content words before it can repeat another
+Item = Tuple[int, str, str]  # (line number, section, text)
+
+
+def stem(word: str) -> str:
+    for end in ("ing", "ed", "s"):
+        if len(word) > len(end) + 2 and word.endswith(end) and not word.endswith("ss"):
+            return word[:-len(end)]
+    return word
+
+
+def content(sentence: str) -> frozenset:
+    words = words_of(TREF.sub(" ", sentence))
+    if words and words[0] in SETTLED:
+        words = words[1:]
+    return frozenset(stem(w) for w in words if w not in STOP and len(w) > 1)
+
+
+def sentences(text: str) -> List[str]:
+    return [s for s in SENTENCE.split(LABEL.sub("", text)) if s.strip()]
+
+
+def settled(sentence: str) -> bool:
+    words = words_of(sentence)
+    return bool(words) and words[0] in SETTLED and bool(re.match(r"^\W*\w+\W*:", sentence.strip()))
+
+
+def minutes_findings(path: pathlib.Path) -> Tuple[List[str], List[Item]]:
+    """Return (findings, items) for one set of minutes."""
+    lines = path.read_bytes().decode("utf-8").splitlines()
+    name = path.name
+    out: List[str] = []
+    items: List[Item] = []
+    seen: Dict[str, int] = {}
+    section = ""
+    fence = ""
+    current: Optional[List] = None  # [line number, section, text] of the item being read
+
+    def close() -> None:
+        nonlocal current
+        if current is not None:
+            items.append((current[0], current[1], current[2].strip()))
+            current = None
+
+    for lineno, line in enumerate(lines, 1):
+        mark = FENCE.match(line)
+        if fence:
+            if mark and mark.group(1)[0] == fence[0] and len(mark.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if mark:
+            close()
+            fence = mark.group(1)
+            continue
+        heading = HEADING.match(line)
+        if heading:
+            close()
+            title = bare(heading.group(2)).rstrip(":")
+            key = next((k for k in MINUTES_SECTIONS + tuple(NOT_IN_MINUTES)
+                        if title == k or title.startswith(k + " ")), "")
+            if key in NOT_IN_MINUTES:
+                out.append("{}:{}: minutes have no \"{}\" section ({})".format(
+                    name, lineno, heading.group(2).strip(), NOT_IN_MINUTES[key]))
+            if key in MINUTES_SECTIONS:
+                seen.setdefault(key, lineno)
+            section = key if key in MINUTES_SECTIONS else ""
+            continue
+        if PRESENT_LINE.match(line):
+            close()
+            seen.setdefault("present", lineno)
+            continue
+        if not line.strip():
+            close()
+            continue
+        bullet = BULLET.match(line)
+        if bullet and section in MINUTES_SECTIONS[1:]:
+            close()
+            current = [lineno, section, bullet.group(1)]
+        elif current is not None:
+            current[2] += " " + line.strip()
+    close()
+
+    missing = [k for k in MINUTES_SECTIONS if k not in seen]
+    for k in missing:
+        out.append("{}: no \"{}\" section".format(name, k.capitalize()))
+    order = [k for k in MINUTES_SECTIONS if k in seen]
+    if [seen[k] for k in order] != sorted(seen[k] for k in order):
+        out.append("{}: sections out of order: want Present, Reports, Action items, Pending".format(name))
+
+    items = [it for it in items if bare(it[2]).rstrip(".") != "none"]  # "- None." holds an empty section
+    for lineno, sec, text in items:
+        if not refs(text):
+            out.append("{}:{}: item cites no T-number".format(name, lineno))
+        if sec == "action items" and not WHO.match(text):
+            out.append("{}:{}: action item is not written \"who: what\"".format(name, lineno))
+
+    split = [(lineno, sec, [(s, content(s), settled(s)) for s in sentences(text)]) for lineno, sec, text in items]
+    for n, (lineno, _, mine) in enumerate(split):
+        for other_line, _, theirs in split[:n]:
+            if any(len(a) >= LONG and len(b) >= LONG and len(a & b) / len(a | b) >= SAME
+                   for _, a, _ in mine for _, b, _ in theirs):
+                out.append("{}:{}: says again what line {} says (say each thing once)".format(
+                    name, lineno, other_line))
+                break
+    done = [(lineno, c) for lineno, sec, ss in split if sec == "reports" for _, c, s in ss if s and c]
+    for lineno, sec, ss in split:
+        if sec != "pending":
+            continue
+        for _, c, _ in ss:
+            hit = next((d for d, s in done if len(c & s) >= 2 and len(c & s) / len(s) >= SAME), None)
+            if hit is not None:
+                out.append("{}:{}: pending, but line {} settles it in Reports".format(name, lineno, hit))
+                break
+    return out, items
+
+
+def minutes_agreed(path: pathlib.Path, items: List[Item], tx: Dict[int, str],
+                   words: Optional[Words]) -> List[str]:
+    out: List[str] = []
+    extra = words.assent if words else []
+    for lineno, sec, text in items:
+        if sec != "reports" or not any(words_of(s)[:1] == ["agreed"] and settled(s) for s in sentences(text)):
+            continue
+        cited = [t for t in refs(text) if t in tx]
+        if not cited:
+            continue
+        span = sorted({k for t in cited for k in range(t, t + AFTER + 1) if k in tx})
+        if not has_assent(" ".join(tx[k] for k in span), extra):
+            out.append("{}:{}: \"Agreed\", but no assent word in T{}-T{} (the cited lines and {} after)".format(
+                path.name, lineno, min(cited), max(cited) + AFTER, AFTER))
+    return out
+
+
 def run(paths: List[pathlib.Path], transcript: Optional[pathlib.Path] = None, fillers: bool = False,
-        words_path: Optional[pathlib.Path] = None) -> int:
+        words_path: Optional[pathlib.Path] = None, shape: str = "decisions") -> int:
     problems: List[str] = []
     tables = rows = 0
     try:
@@ -411,6 +581,14 @@ def run(paths: List[pathlib.Path], transcript: Optional[pathlib.Path] = None, fi
         for path in paths:
             if not path.is_file():
                 raise ValueError("{}: no such file".format(path))
+            if shape == "minutes":
+                found, items = minutes_findings(path)
+                problems += found
+                rows += len(items)
+                if tx is not None:
+                    problems += transcript_findings(path, [], tx, fillers, words)
+                    problems += minutes_agreed(path, items, tx, words)
+                continue
             good_rows: List[Row] = []
             found, t, r = findings(path, good_rows)
             problems += found
@@ -423,8 +601,11 @@ def run(paths: List[pathlib.Path], transcript: Optional[pathlib.Path] = None, fi
         return 2
     for problem in problems:
         print("FAIL " + problem)
-    print("{}: {} file(s), {} decisions table(s), {} row(s), {} finding(s)".format(
-        PROG, len(paths), tables, rows, len(problems)))
+    if shape == "minutes":
+        print("{}: {} file(s), minutes, {} item(s), {} finding(s)".format(PROG, len(paths), rows, len(problems)))
+    else:
+        print("{}: {} file(s), {} decisions table(s), {} row(s), {} finding(s)".format(
+            PROG, len(paths), tables, rows, len(problems)))
     return 1 if problems else 0
 
 
@@ -634,9 +815,72 @@ _TABLE = [
     ("red: Decisions heading with no table, at the end", GOOD + "\n## Decisions\n\nNone.\n", 1, "heading has no"),
 ]
 
+MINUTES = (
+    "# Minutes of the call\n\n"
+    "Present: Sam, Alex.\n\n"
+    "## Reports\n\n"
+    "- **Call day.** Sam finds Thursdays work better for most of us (T3). Agreed: move the call to\n"
+    "  Thursdays (T2-T4).\n"
+    "- **Docs.** The docs now live on apache.org (T5).\n\n"
+    "## Action items\n\n"
+    "- Alex: write the release notes (T6).\n\n"
+    "## Pending\n\n"
+    "- The budget, next time (T7).\n"
+)
+
+
+def _min_case(record: str, expected: int, says: str = "", *, transcript: bool = False,
+              words: str = "") -> Callable[[pathlib.Path], bool]:
+    def case(base: pathlib.Path) -> bool:
+        rec = _write(base / "minutes.md", record)
+        tx = _write(base / "minutes-transcript.md", TRANSCRIPT) if transcript or words else None
+        wp = _write(base / "words.md", words) if words else None
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = run([rec], tx, False, wp, "minutes")
+        return code == expected and says in out.getvalue()
+    return case
+
+
+_MIN = [
+    ("minutes: a good set", MINUTES, 0, "minutes, 4 item(s), 0 finding(s)", {}),
+    ("minutes: a good set, with its transcript and words file", MINUTES, 0, "0 finding(s)",
+     {"words": WORDS}),
+    ("minutes: Present as a heading, bold who, numbered items", MINUTES.replace("Present: Sam, Alex.",
+     "## Present\n\nSam, Alex.").replace("- Alex: write", "1. **Alex:** write"), 0, "0 finding(s)", {}),
+    ("minutes: an action and its report may share a topic word", MINUTES.replace("The budget, next time",
+     "Whether the call on Thursdays needs an agenda"), 0, "0 finding(s)", {}),
+    ("minutes: \"None.\" holds an empty section", MINUTES.replace("- Alex: write the release notes (T6).",
+     "- None."), 0, "minutes, 3 item(s), 0 finding(s)", {}),
+    ("red: minutes with no Pending", MINUTES[:MINUTES.index("## Pending")], 1, "no \"Pending\" section", {}),
+    ("red: minutes out of order", MINUTES.replace("## Action items", "## Later").replace("## Pending",
+     "## Action items").replace("## Later", "## Pending").replace("- Alex: write the release notes (T6).",
+     "- Alex: X (T7).").replace("- The budget, next time (T7).", "- Y (T6)."), 1, "out of order", {}),
+    ("red: a Corrections section in minutes", MINUTES + "\n## Corrections\n\n- apjay.org to apache.org (T5).\n",
+     1, "minutes have no \"Corrections\" section", {}),
+    ("red: a Decisions section in minutes", MINUTES.replace("## Action items", "## Decisions\n\n- X (T2).\n\n"
+     "## Action items"), 1, "agreed items fold into Reports", {}),
+    ("red: an item with no T-number", MINUTES.replace("release notes (T6)", "release notes"), 1,
+     "minutes.md:13: item cites no T-number", {}),
+    ("red: an action not written who: what", MINUTES.replace("- Alex: write", "- Write"), 1,
+     "minutes.md:13: action item is not written \"who: what\"", {}),
+    ("red: an agreed item restated as an action", MINUTES.replace("- **Docs.** The docs now live on apache.org (T5).",
+     "- **Notes.** Agreed: Alex writes the release notes (T6)."), 1, "minutes.md:13: says again what line 9 says", {}),
+    ("red: the same point in Reports and Pending", MINUTES.replace("The budget, next time",
+     "Sam finds Thursdays work better for most people"), 1, "minutes.md:17: says again what line 7 says", {}),
+    ("red: settled in Reports, still pending", MINUTES.replace("The budget, next time",
+     "Whether to move the call to Thursdays"), 1, "minutes.md:17: pending, but line 7 settles it", {}),
+    ("red: Agreed with no assent word in its lines", MINUTES.replace("The docs now live on apache.org (T5).",
+     "Agreed: Sam keeps the docs page up to date (T7)."), 1, "minutes.md:9: \"Agreed\", but no assent word",
+     {"transcript": True}),
+    ("red: a heard spelling left in minutes", MINUTES.replace("apache.org", "apjay.org"), 1,
+     "heard spelling", {"words": WORDS}),
+]
+
 _CASES: List[Tuple[str, Callable[[pathlib.Path], bool]]] = (
     [(row[0], _table_case(*row[1:])) for row in _TABLE]
     + [(row[0], _tx_case(row[1], row[2], row[3], **row[4])) for row in _TX]
+    + [(row[0], _min_case(row[1], row[2], row[3], **row[4])) for row in _MIN]
     + [
         ("red: two files, the bad one named", _case_two_files_one_bad),
         ("usage: an unnumbered transcript, a bad words file, a missing transcript", _case_tx_usage),
@@ -676,6 +920,8 @@ def main() -> int:
     parser.add_argument("--quote-fillers", choices=("keep", "drop"), default="keep",
                         help="drop: a quote may leave out fillers, each place marked [...] (default keep)")
     parser.add_argument("--words", metavar="FILE", help="the project's words file (corrections, names, assent)")
+    parser.add_argument("--shape", choices=SHAPES, default="decisions",
+                        help="minutes: check minutes (Present, Reports, Action items, Pending), not decisions tables")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -693,7 +939,8 @@ def main() -> int:
     return run([pathlib.Path(f) for f in args.files],
                pathlib.Path(args.transcript) if args.transcript else None,
                args.quote_fillers == "drop",
-               pathlib.Path(args.words) if args.words else None)
+               pathlib.Path(args.words) if args.words else None,
+               args.shape)
 
 
 if __name__ == "__main__":
